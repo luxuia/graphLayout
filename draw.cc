@@ -13,7 +13,7 @@
 #include "common/controls.hpp"
 #include "common/texture.hpp"
 #include <algorithm>
-#include <layout.h>
+#include "layout.h"
 
 struct Particle {
 	glm::vec3 pos, speed;
@@ -29,27 +29,28 @@ struct PARTICLE_CONFIG {
 	GLuint vertexArrayID;
 	GLuint programID;
 	GLuint textureID;
+	GLuint viewProjectMatrixID;
+	GLuint cameraRight_worldspace_ID;
+	GLuint cameraUp_worldspace_ID;
 	GLuint particleVertexBuff;
 	GLuint particlePositionSizeBuff;
 	GLuint particleColorBuff;
 
 	float 		lastTime;
 
-	const int 	MaxParticleSize = 1000000;
+	static const int 	MaxParticleSize = 1000000;
 	Particle 	particleContainer[MaxParticleSize];
 	GLfloat 	particlePositionSize[MaxParticleSize*4];
-	GLuchar 	particleColor[MaxParticleSize*4];
-	int 		particleNum = 0;
+	GLubyte 	particleColor[MaxParticleSize*4];
+	glm::vec3 cameraPosition;
+	int 			texture;
+	int 			particleNum;
 
 	glm::mat4 	projectMatrix;
 	glm::mat4 	viewMatrix;
+	glm::mat4 	viewProjectMatrix;
 } g;
-
-struct Layout {
-	void init();
-	int iterate();
-
-} layout;
+BaseLayout *layout;
 
 
 void sortParticle(Particle* particles, int particleNum) {
@@ -63,11 +64,16 @@ void initWindow(void ) {
 		fprintf(stderr, "cant init glfw!\n");
 		exit;
 	}
+	glfwOpenWindowHint(GLFW_FSAA_SAMPLES, 4);
+	glfwOpenWindowHint(GLFW_WINDOW_NO_RESIZE,GL_TRUE);
+	glfwOpenWindowHint(GLFW_OPENGL_VERSION_MAJOR, 3);
+	glfwOpenWindowHint(GLFW_OPENGL_VERSION_MINOR, 3);
+	glfwOpenWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
 	if ( !glfwOpenWindow(1024, 768, 0, 0, 0, 0, 32, 0, GLFW_WINDOW ) ) {
 		glfwTerminate();
 	}
-
+	glewExperimental = true;
 	if ( glewInit() != GLEW_OK ) {
 		fprintf(stderr, "glew init failed!\n");
 		exit;
@@ -75,84 +81,129 @@ void initWindow(void ) {
 	glfwSetWindowTitle("Particle graph layout");
 	glfwEnable( GLFW_STICKY_KEYS );
 }
-
+	static const GLfloat vertexBuffData[] = {
+		-0.5, -0.5, 0,
+		 0.5, -0.5, 0,
+		-0.5, 0.5, 0,
+		 0.5, 0.5, 0
+	};
 void initGL(void) {
 	glClearColor( 0.0f, 0.0f, 0.4f, 0.0f );
 	glEnable( GL_DEPTH_TEST );
 	glDepthFunc( GL_LESS );
 	fprintf(stderr, "start drawing\n");
 
-	GLGenVertexArrays(1, &g.vertexArrayID);
-	GLBindVertexArray(g.vertexArrayID);
-	g.programID = loadShaders("Particle.vertexshader", "Particle.fragmentshader");
+	glGenVertexArrays(1, &g.vertexArrayID);
+	glBindVertexArray(g.vertexArrayID);
+	g.programID = LoadShaders("Particle.vertexshader", "Particle.fragmentshader");
 
-	g.ViewProjectMatrixID = glGetUniformLocation(g.programID, "VP");
-	g.TextureiD = glGetUniformLocation(g.programID, "myTextureSample");
-	g.Texture = loadDDS("particle.DDS");
+	g.viewProjectMatrixID = glGetUniformLocation(g.programID, "VP");
+	g.cameraUp_worldspace_ID = glGetUniformLocation(g.programID, "CameraUp_worldspace_ID");
+	g.cameraRight_worldspace_ID = glGetUniformLocation(g.programID, "CameraRight_worldspace_ID");
+	g.textureID = glGetUniformLocation(g.programID, "myTextureSampler");
+	g.texture = loadDDS("particle.DDS");
 
 
+	glGenBuffers(1, &g.particleVertexBuff);
+	glBindBuffer(GL_ARRAY_BUFFER, g.particleVertexBuff);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(vertexBuffData), vertexBuffData, GL_STATIC_DRAW);
 
-	GLfloat vertexBuffData[] = {
-		-0.5, -0.5, 0,
-		 0.5, -0.5, 0,
-		-0.5, 0.5, 0,
-		 0.5, 0.5, 0
-	};
-	GLGenBuffers(1, &g.particleVertexBuff);
-	GLBindBuffer(GL_ARRAY_BUFFER, g.particleVertexBuff);
-	GLBufferData(GL_ARRAY_BUFFER, sizeof(vertexBuffData), vertexBuffData, GL_STATIC_DRAW);
+	glGenBuffers(1, &g.particlePositionSizeBuff);
+	glBindBuffer(GL_ARRAY_BUFFER, g.particlePositionSizeBuff);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat)*4*g.MaxParticleSize, NULL, GL_STREAM_DRAW);
 
-	GLGenBuffers(1, &g.particlePositionSizeBuff);
-	GLBindBuffer(GL_ARRAY_BUFFER, g.particlePositionSizeBuff);
-	GLBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat)*4*g.MaxParticleSize, NULL, GL_STREAM_DRAW);
-
-	GLGenBuffers(1, &g.particleColorBuff);
-	GLBindBuffer(GL_ARRAY_BUFFER, g.particleColorBuff);
-	GLBufferData(GL_ARRAY_BUFFER, sizeof(GLuchar)*4*g.MaxParticleSize, NULL, GL_STREAM_DRAW);
+	glGenBuffers(1, &g.particleColorBuff);
+	glBindBuffer(GL_ARRAY_BUFFER, g.particleColorBuff);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(GLubyte)*4*g.MaxParticleSize, NULL, GL_STREAM_DRAW);
 
 	g.lastTime = glfwGetTime();
-
-
 }
 
 void initParticle() {
-	for (int i = 0; i < g.MaxParticleSize; ++i) {
-		g.particleContainer.life = -1;
+	g.particleNum = 0;
+	FILE* fin = fopen("test.graph", "r");
+	Graph* graph = new Graph(1000);
+	int u, v;
+	float w;
+	while (fscanf(fin, "%d%d%f", &u, &v, &w) != EOF && graph->num < 100) {
+		graph->add(u, v, w);
+		graph->add(v, u, w);
 	}
-	layout.init();
+	layout = new BaseLayout(graph);
+	layout->init2D();
+
+	g.particleNum = 0;
+	for (int i = 0; i < graph->num && i < 10; ++i) {
+		if (graph->pre[i] != -1) {
+			g.particleContainer[g.particleNum].pos = layout->pos[i];
+			// fill buff
+			g.particlePositionSize[g.particleNum*4] = layout->pos[i].x*10;
+			g.particlePositionSize[g.particleNum*4+1] = layout->pos[i].y*10;
+			g.particlePositionSize[g.particleNum*4+2] = -10.0f;//layout->pos[i].z;
+			g.particlePositionSize[g.particleNum*4+3] = (rand()%1000)/2000.0f + 0.1f;
+
+			g.particleColor[g.particleNum*4] = rand()%256;
+			g.particleColor[g.particleNum*4+1] = rand()%256;
+			g.particleColor[g.particleNum*4+2] = rand()%256;
+			g.particleColor[g.particleNum*4+3] = (rand()%256)/3;
+			fprintf(stderr, "%d-(%f,%f,%f,%f)/(%d,%d,%d,%d)\n", g.particleNum,
+							g.particlePositionSize[g.particleNum*4], 
+							g.particlePositionSize[g.particleNum*4+1], 
+							g.particlePositionSize[g.particleNum*4+2], 
+							g.particlePositionSize[g.particleNum*4+3], 
+							g.particleColor[g.particleNum*4],
+							g.particleColor[g.particleNum*4+1],
+							g.particleColor[g.particleNum*4+2],
+							g.particleColor[g.particleNum*4+3]
+							);
+			g.particleNum++;
+		}
+	}
 }
 
 void buildMatrix() {
+	/*
 	g.projectMatrix = glm::perspective(0.45, 4.0/3.0, 0.1, 1000.0);
 	g.viewMatrix = glm::lookAt(
 			glm::vec3(0, 0, 5), // position
 			glm::vec3(0, 0, 0), // direction
 			glm::vec3(0, 1, 0)  // up
 		);
-	g.camerPosition = glm::inverse(g.viewMatrix)[3];
+	g.cameraPosition = glm::vec3(glm::inverse(g.viewMatrix)[3]);
+	*/
+
+	computeMatricesFromInputs();
+	g.projectMatrix = getProjectionMatrix();
+	g.viewMatrix = getViewMatrix();
+	g.viewProjectMatrix = g.projectMatrix*g.viewMatrix;
+	g.cameraPosition = glm::vec3(glm::inverse(g.viewMatrix)[3]);
 
 }
 
-void updateParticle();
+void updateParticle() {
+
+}
 
 void updateBuffer() {
+	//fprintf(stderr, "iter\n");
   glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
   float currentTime = glfwGetTime();
   float delta = currentTime - g.lastTime;
   g.lastTime = currentTime;
   buildMatrix();
-  if (layout.iterate()) {
+
+  if (layout->iterate()) {
   	updateParticle();
   }
-  sortParticle(g.particleContainer, g.particleNum);
+  //sortParticle(g.particleContainer, g.particleNum);
 
-  GLBindBuffer(GL_ARRAY_BUFFER, g.particlePositionSizeBuff);
-  GLBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat)*4*g.MaxParticleSize, NULL, GL_STREAM_DRAW);
-  GLBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(GLfloat)*4*g.particleNum, g.particlePositionSize);
+  glBindBuffer(GL_ARRAY_BUFFER, g.particlePositionSizeBuff);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat)*4*g.MaxParticleSize, NULL, GL_STREAM_DRAW);
+  glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(GLfloat)*4*g.particleNum, g.particlePositionSize);
 
-  GLBindBuffer(GL_ARRAY_BUFFER, g.particleColorBuff);
-  GLBufferData(GL_ARRAY_BUFFER, sizeof(GLuchar)*4*g.MaxParticleSize, NULL, GL_STREAM_DRAW);
-  GLBufferSubData(GL_ARRAY_BUFFER, 0, sizoef(GLuchar)*4*g.MaxParticleSize, g.particleColor);
+  glBindBuffer(GL_ARRAY_BUFFER, g.particleColorBuff);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(GLubyte)*4*g.MaxParticleSize, NULL, GL_STREAM_DRAW);
+  glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(GLubyte)*4*g.particleNum, g.particleColor);
 
   glEnable( GL_BLEND );
   glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
@@ -160,10 +211,14 @@ void updateBuffer() {
   glUseProgram( g.programID );
 
   glActiveTexture( GL_TEXTURE0 );
-  glBindTexture( GL_TEXTURE, g.Texture );
-  glUniform1i(g.TextureID);
+  glBindTexture( GL_TEXTURE, g.texture );
+  glUniform1i(g.textureID, 0);
 
-  glUniformMatrix4fv(g.ViewProjectMatrixID, 1, GL_FALSE, g.projectMatrix*g.viewMatrix);
+	glUniform3f(g.cameraRight_worldspace_ID, g.viewMatrix[0][0], g.viewMatrix[1][0], g.viewMatrix[2][0]);
+	glUniform3f(g.cameraUp_worldspace_ID   , g.viewMatrix[0][1], g.viewMatrix[1][1], g.viewMatrix[2][1]);
+
+
+  glUniformMatrix4fv(g.viewProjectMatrixID, 1, GL_FALSE, &g.viewProjectMatrix[0][0]);
 
   glEnableVertexAttribArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, g.particleVertexBuff);
@@ -189,11 +244,11 @@ void updateBuffer() {
 
   glEnableVertexAttribArray(2);
   glBindBuffer(GL_ARRAY_BUFFER, g.particleColorBuff);
-  glvertexAttribPointer(
+  glVertexAttribPointer(
   	2,
   	4, 
-  	GL_UNSIGNED_CHAR,
-  	GL_TURE,
+  	GL_UNSIGNED_BYTE,
+  	GL_TRUE,
   	0,
   	(void*)0
   );
@@ -211,8 +266,9 @@ void updateBuffer() {
 
 }
 
+void cleanUp() {
 
-
+}
 
 int main(void) {
 
