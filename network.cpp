@@ -2,6 +2,8 @@
 
 
 void GraphNetwork::update(BaseLayout* layout, Control &control) {
+
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glUseProgram(programID);
 	glm::mat4 viewProjectionMatrix = control.ProjectionMatrix*control.ViewMatrix;
 	glUniformMatrix4fv(viewProjectionID, 1, GL_FALSE, &viewProjectionMatrix[0][0]);
@@ -14,8 +16,11 @@ void GraphNetwork::update(BaseLayout* layout, Control &control) {
 	glDrawArrays(GL_LINES, 0, count);
 }
 
+
+
 int GraphNetwork::setupData(BaseLayout *layout) {
 	int count = 0;
+	//fprintf(stderr, "iter next\n");
 	for (int i = 0; i < layout->g->num; ++i) {
 		if (layout->g->pre[i] != -1) {
 			for (int v, e = layout->g->pre[i]; e != -1; e = layout->g->edge[e].next) {
@@ -30,6 +35,15 @@ int GraphNetwork::setupData(BaseLayout *layout) {
 				vertexData[count*3] = layout->pos[v].x;
 				vertexData[count*3+1] = layout->pos[v].y;
 				vertexData[count*3+2] = layout->pos[v].z;
+				/*
+				fprintf(stderr, "(%f,%f,%f),(%f,%f,%f)\n", 
+																		vertexData[(count-1)*3],
+																		vertexData[(count-1)*3+1],
+																		vertexData[(count-1)*3+2],
+																		vertexData[count*3],
+																		vertexData[count*3+1],
+																		vertexData[count*3+2]);
+				*/
 				count++;
 			}
 		}

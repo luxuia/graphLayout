@@ -81,8 +81,6 @@ struct Graph {
 		pre[u] = total++;
 		return 0;
 	}
-
-
 };
 
 
@@ -92,7 +90,13 @@ struct BaseLayout {
 	int iterations;
 	float force_constant;
 	BaseLayout(Graph* _g, int iter = 50, float cforce = 0.01):
-			g(_g), pos(NULL), iterations(iter), force_constant(cforce) {};
+					g(_g), pos(NULL), iterations(iter), force_constant(cforce) {
+
+						// TODO parameter
+			
+			init2D();
+
+	};
 	int init2D(int n = -1) {
 		if (n == -1) {
 			n = g->total;

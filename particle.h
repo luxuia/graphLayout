@@ -12,7 +12,7 @@
 #include "common/texture.hpp"
 #include "common/controls.hpp"
 #include "layout.h"
-
+#include "sphere.h"
 
 struct Particle {
 	glm::vec3 pos;
@@ -31,6 +31,7 @@ struct Particle {
 struct ParticleConfig {
 	int count;
 	static const int MaxParticles = 100000;
+	static const int SubDivision = 50;
 	Particle particlesContainer[MaxParticles];
 	BaseLayout* layout;
 	GLfloat* positionSizeData;
@@ -45,11 +46,15 @@ struct ParticleConfig {
 	GLuint vertexBuffer;
 	GLuint positionBuffer;
 	GLuint colorBuffer;
+	Sphere* sphere;
 
-
-	void init() {
+	void init(BaseLayout* layout) {
+		this->layout = layout;
+		sphere = new Sphere();
+		sphere->init(SubDivision, layout->g->num);
 		initBuffer();
 		initParticle();
+
 	}
 
 	void initBuffer() {
@@ -69,13 +74,24 @@ struct ParticleConfig {
 	void bindBuffer() {
 		glGenVertexArrays(1, &vertexArrayID);
 		glBindVertexArray(vertexArrayID);
-		static const GLfloat g_vertex_buffer_data[] = { 
-				 -0.5f, -0.5f, 0.0f,
-				  0.5f, -0.5f, 0.0f,
-				 -0.5f,  0.5f, 0.0f,
-				  0.5f,  0.5f, 0.0f,
-			};
 			
+			glGenBuffers(1, &(sphere->vertexBuffer));
+			glGenBuffers(1, &(sphere->positionSizeBuffer));
+			glGenBuffers(1, &(sphere->normalBuffer));
+
+		glBindBuffer(GL_ARRAY_BUFFER, sphere->vertexBuffer);
+		//glBufferData(GL_ARRAY_BUFFER, sizeof(float)*(numVert+numNorm), vertex, GL_STATIC_DRAW);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat)*(sphere->numVert), sphere->vertex, GL_STATIC_DRAW);
+
+		glBindBuffer(GL_ARRAY_BUFFER, sphere->normalBuffer);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat)*sphere->numNorm, sphere->normal, GL_STATIC_DRAW);
+		
+		/// Position and size buffer
+		glBindBuffer(GL_ARRAY_BUFFER, sphere->positionSizeBuffer);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat)*4*layout->g->num, NULL, GL_STREAM_DRAW);
+
+
+/*
 			glGenBuffers(1, &vertexBuffer);
 			glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
 			glBufferData(GL_ARRAY_BUFFER, sizeof(g_vertex_buffer_data), g_vertex_buffer_data, GL_STATIC_DRAW);
@@ -93,7 +109,7 @@ struct ParticleConfig {
 			glBindBuffer(GL_ARRAY_BUFFER, colorBuffer);
 			// Initialize with empty (NULL) buffer : it will be updated later, each frame.
 			glBufferData(GL_ARRAY_BUFFER, MaxParticles * 4 * sizeof(GLubyte), NULL, GL_STREAM_DRAW);
-
+*/
 	}
 
 	void fillData(int init = 1) {
@@ -108,7 +124,7 @@ struct ParticleConfig {
 				//layout->pos[i].z = -10.0f;
 				//// TODO sphere 3D
 
-				positionSizeData[count*4+3] = (rand()%1000)/2000.0+0.004;//layout->g->inDegree[i];
+				positionSizeData[count*4+3] = 0.02;//(rand()%1000)/2000.0+0.004;//layout->g->inDegree[i];
 
 				if (init) {
 					colorData[count*4] = rand()%256;
@@ -124,17 +140,7 @@ struct ParticleConfig {
 	void initParticle() {
 		colorData = new GLubyte[MaxParticles*4];
 		positionSizeData = new GLfloat[MaxParticles*4];
-		FILE* fin = fopen("test.graph", "r");
-		Graph* graph = new Graph(100000);
-
-		int u, v;
-		float w;
-		while (fscanf(fin, "%d%d%f", &u, &v, &w) != EOF && graph->num < 100) {
-			graph->add(u, v, w);
-			graph->add(v, u, w);
-		}
-		layout = new BaseLayout(graph);
-		layout->init2D(100);
+		
 		//graph->calculateDegree();
 		fillData();
 	}
@@ -158,7 +164,8 @@ struct ParticleConfig {
 	void update(Control &control) {
 		updateData();
 		//updateBuffer(control);
-		updateBufferPoint(control);
+		//updateBufferPoint(control);
+		updateBufferSphere(control);
 	}
 
 
@@ -171,48 +178,77 @@ struct ParticleConfig {
 		}
 	}
 
-	void updateBufferPoint(Control &ctr) {
+	
+
+
+
+//// Draw particle as Sphere
+	void updateBufferSphere(Control &ctr) {
 		// Link program
+		
+		
 		glUseProgram(programID);
-
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
 		// Use position buffer, upload data to gpu
-		glBindBuffer(GL_ARRAY_BUFFER, positionBuffer);
-		glBufferData(GL_ARRAY_BUFFER, MaxParticles*4*sizeof(GLfloat), NULL, GL_STREAM_DRAW);
-		glBufferSubData(GL_ARRAY_BUFFER, 0, count*sizeof(GLfloat)*4, positionSizeData);
+		//glBindBuffer(GL_ARRAY_BUFFER, sphere->vertexBuffer);
+		
+		glBindBuffer(GL_ARRAY_BUFFER, sphere->positionSizeBuffer);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(float)*layout->g->num*4, NULL, GL_STREAM_DRAW);
+		glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float)*layout->g->num*4, positionSizeData);
 
-		glBindBuffer(GL_ARRAY_BUFFER, colorBuffer);
-		glBufferData(GL_ARRAY_BUFFER, MaxParticles*4*sizeof(GLubyte), NULL, GL_STREAM_DRAW);
-		glBufferSubData(GL_ARRAY_BUFFER, 0, count*sizeof(GLubyte), colorData);
-
+		glUniform3f(cameraRightWorldspaceID, ctr.ViewMatrix[0][0], ctr.ViewMatrix[1][0], ctr.ViewMatrix[2][0]);
+		glUniform3f(cameraUpWorldspaceID   , ctr.ViewMatrix[0][1], ctr.ViewMatrix[1][1], ctr.ViewMatrix[2][1]);
 		glm::mat4 vpMatrix = ctr.ProjectionMatrix*ctr.ViewMatrix;
 		glUniformMatrix4fv(viewProjectMatrixID, 1, GL_FALSE, &vpMatrix[0][0]);
 
+		
+		glEnableVertexAttribArray(0);
+		glBindBuffer(GL_ARRAY_BUFFER, sphere->vertexBuffer);
+		glVertexAttribPointer(
+			0, 
+			3,
+			GL_FLOAT,
+			GL_FALSE,
+			0,
+			0
+		);
+
 		glEnableVertexAttribArray(1);
-			glBindBuffer(GL_ARRAY_BUFFER, positionBuffer);
-			glVertexAttribPointer(
-				1,                                // attribute. No particular reason for 1, but must match the layout in the shader.
-				4,                                // size : x + y + z + size => 4
-				GL_FLOAT,                         // type
-				GL_FALSE,                         // normalized?
-				0,                                // stride
-				(void*)0                          // array buffer offset
-			);
+		glBindBuffer(GL_ARRAY_BUFFER, sphere->positionSizeBuffer);
+		glVertexAttribPointer(
+			1,                                // attribute. No particular reason for 1, but must match the layout in the shader.
+			4,                                // size : x + y + z + size => 4
+			GL_FLOAT,                         // type
+			GL_FALSE,                         // normalized?
+			0,                                // stride
+			(void*)0                          // array buffer offset
+		);
 
-			// 3rd attribute buffer : particles' colors
-			glEnableVertexAttribArray(2);
-			glBindBuffer(GL_ARRAY_BUFFER, colorBuffer);
-			glVertexAttribPointer(
-				2,                                // attribute. No particular reason for 1, but must match the layout in the shader.
-				4,                                // size : r + g + b + a => 4
-				GL_UNSIGNED_BYTE,                 // type
-				GL_TRUE,                          // normalized?    *** YES, this means that the unsigned char[4] will be accessible with a vec4 (floats) in the shader ***
-				0,                                // stride
-				(void*)0                          // array buffer offset
-			);
 
-			glEnable(GL_PROGRAM_POINT_SIZE);
-			glDrawArrays(GL_POINTS, 0, count);
+		glEnableVertexAttribArray(3);
+		glBindBuffer(GL_ARRAY_BUFFER, sphere->normalBuffer);
+		glVertexAttribPointer(
+			3, 
+			3,
+			GL_FLOAT,
+			GL_FALSE,
+			0,
+			0
+		);
 
+
+		glVertexAttribDivisor(0, 0);
+		glVertexAttribDivisor(3, 0);
+		glVertexAttribDivisor(1, 1);
+
+
+		glDrawArraysInstanced(GL_TRIANGLES, 0, SubDivision*SubDivision*3, layout->g->num);
+
+		glDisableVertexAttribArray(0);
+		glDisableVertexAttribArray(1);
+		glDisableVertexAttribArray(3);
+
+		glUseProgram(0);
 	}
 
 
@@ -313,6 +349,52 @@ struct ParticleConfig {
 			glDisableVertexAttribArray(2);
 	}
 
+
+void updateBufferPoint(Control &ctr) {
+		// Link program
+		//glBindBuffer(GL_ARRAY_BUFFER, 0);
+		glUseProgram(programID);
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+		
+
+		// Use position buffer, upload data to gpu
+		glBindBuffer(GL_ARRAY_BUFFER, positionBuffer);
+		glBufferData(GL_ARRAY_BUFFER, MaxParticles*4*sizeof(GLfloat), NULL, GL_STREAM_DRAW);
+		glBufferSubData(GL_ARRAY_BUFFER, 0, count*sizeof(GLfloat)*4, positionSizeData);
+
+		glBindBuffer(GL_ARRAY_BUFFER, colorBuffer);
+		glBufferData(GL_ARRAY_BUFFER, MaxParticles*4*sizeof(GLubyte), NULL, GL_STREAM_DRAW);
+		glBufferSubData(GL_ARRAY_BUFFER, 0, count*sizeof(GLubyte), colorData);
+
+		glm::mat4 vpMatrix = ctr.ProjectionMatrix*ctr.ViewMatrix;
+		glUniformMatrix4fv(viewProjectMatrixID, 1, GL_FALSE, &vpMatrix[0][0]);
+
+		glEnableVertexAttribArray(1);
+			glBindBuffer(GL_ARRAY_BUFFER, positionBuffer);
+			glVertexAttribPointer(
+				1,                                // attribute. No particular reason for 1, but must match the layout in the shader.
+				4,                                // size : x + y + z + size => 4
+				GL_FLOAT,                         // type
+				GL_FALSE,                         // normalized?
+				0,                                // stride
+				(void*)0                          // array buffer offset
+			);
+
+			// 3rd attribute buffer : particles' colors
+			glEnableVertexAttribArray(2);
+			glBindBuffer(GL_ARRAY_BUFFER, colorBuffer);
+			glVertexAttribPointer(
+				2,                                // attribute. No particular reason for 1, but must match the layout in the shader.
+				4,                                // size : r + g + b + a => 4
+				GL_UNSIGNED_BYTE,                 // type
+				GL_TRUE,                          // normalized?    *** YES, this means that the unsigned char[4] will be accessible with a vec4 (floats) in the shader ***
+				0,                                // stride
+				(void*)0                          // array buffer offset
+			);
+
+			glEnable(GL_PROGRAM_POINT_SIZE);
+			glDrawArrays(GL_POINTS, 0, count);
+	}
 
 };
 

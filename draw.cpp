@@ -18,11 +18,12 @@
 #include "particle.h"
 #include "network.h"
 
-Control gControl;
+Control* gControl;
 
 // CPU representation of a particle
-ParticleConfig gParticleConfig;
-GraphNetwork gGraphNetwork;
+BaseLayout* gLayout;
+ParticleConfig* gParticleConfig;
+GraphNetwork* gGraphNetwork;
 
 
 int initWindow() {
@@ -78,11 +79,36 @@ void update() {
 
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-	gControl.computeMatricesFromInputs();
+	gControl->computeMatricesFromInputs();
 
 	// TODO abstruct layout from Particles, it should update alone.
-	gParticleConfig.update(gControl);
-	gGraphNetwork.update(gParticleConfig.layout, gControl);
+	gParticleConfig->update(*gControl);
+	gGraphNetwork->update(gParticleConfig->layout, *gControl);
+
+}
+
+void initObject() {
+	gControl = new Control();
+	gControl->init();
+
+
+//// Init graph ///////////
+	FILE* fin = fopen("test.graph", "r");
+	Graph* graph = new Graph(100000);
+	int u, v;
+	float w;
+	while (fscanf(fin, "%d%d%f", &u, &v, &w) != EOF && graph->num < 100) {
+		graph->add(u, v, w);
+		graph->add(v, u, w);
+	}
+	gLayout = new BaseLayout(graph, 50);
+
+	gParticleConfig = new ParticleConfig();
+	gParticleConfig->init(gLayout);
+	gGraphNetwork = new GraphNetwork();
+	gGraphNetwork->init(gLayout);
+	
+	fprintf(stderr, "Object init over\n");
 }
 
 int main( void )
@@ -90,9 +116,8 @@ int main( void )
 	// Initialise GLFW
 	initWindow();
 	initGL();
-	gParticleConfig.init();
-	gGraphNetwork.init(gParticleConfig.layout);
-	gControl.init();
+	initObject();
+	
 	
 	// The VBO containing the 4 vertices of the particles.
 	// Thanks to instancing, they will be shared by all particles.
@@ -109,14 +134,14 @@ int main( void )
 		   glfwGetWindowParam( GLFW_OPENED ) );
 
 
-	delete[] gParticleConfig.positionSizeData;
+	delete[] gParticleConfig->positionSizeData;
 
 	// Cleanup VBO and shader
-	glDeleteBuffers(1, &gParticleConfig.positionBuffer);
-	glDeleteBuffers(1, &gParticleConfig.vertexBuffer);
-	glDeleteProgram(gParticleConfig.programID);
-	glDeleteTextures(1, &gParticleConfig.textureID);
-	glDeleteVertexArrays(1, &gParticleConfig.vertexArrayID);
+	glDeleteBuffers(1, &gParticleConfig->positionBuffer);
+	glDeleteBuffers(1, &gParticleConfig->vertexBuffer);
+	glDeleteProgram(gParticleConfig->programID);
+	glDeleteTextures(1, &gParticleConfig->textureID);
+	glDeleteVertexArrays(1, &gParticleConfig->vertexArrayID);
 	
 
 	// Close OpenGL window and terminate GLFW

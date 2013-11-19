@@ -7,7 +7,7 @@ output = draw
 $(output): draw.o $(common)
 		$(CC) draw.o $(common) -o $(output) $(glFlag) $(flag)
 
-draw.o: draw.cpp layout.h particle.h
+draw.o: draw.cpp layout.h particle.h sphere.h
 	$(CC) -c draw.cpp $(flag)
 
 
